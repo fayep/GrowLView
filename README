@@ -1,0 +1,17 @@
+GrowLView
+(C)2011 Faye Pearson, ZIPPYSoft.
+
+Beginnings of a LiveView implementation in ObjectiveC for Cocoa.
+Tested on OSX Snow Leopard 10.6.6
+
+Thanks to Andrew de Quincey (adq.livejournal.com) for his work analysing the
+protocol which I have gleaned from the python "liveview" project in.
+
+http://code.google.com/p/adqmisc/source/browse
+
+Please feel free to drop me comments or fork.
+
+If you get it talking to Growl (or Cydia) before I do, please let me know!
+
+You can find the latest version on git://github.com/fayep/GrowLView.git
+(If you didn't find it there)
