@@ -17,6 +17,10 @@
 		viewWidth, viewHeight,
 		announceWidth, announceHeight,
 		textChunkSize, idleTimer;
+	int menuItemId,navAction,navType,alertAction,maxBodySize;
+	LiveViewStatus_t screenStatus;
+	BOOL wasInAlert;
+	
 	NSString *softwareVersion;
 	NSMutableArray *menuItems;
 	NSObject<LiveViewCallback> *callback;
@@ -28,6 +32,7 @@
 	
 }
 
+- (NSString*)softwareVersion;
 - (void)registerWithCallback:(NSObject<LiveViewCallback> *)lvc;
 - (void)addMenuItem:(LVMenuItem *)item;
 - (void)stop;

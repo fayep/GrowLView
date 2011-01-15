@@ -109,7 +109,9 @@ typedef enum {
 
 @protocol LiveViewCallback
 - (void)newLiveViewConnection;
-- (void)handleLiveViewNavigation:(int)navigation;
+- (void)handleLiveViewNavigationAction:(int)navActionParam ofType:(int)navTypeParam
+								inMenu:(int)menuIdParam atItem:(int)menuItemParam;
+- (void)handleLiveViewAlertAction:(int)alertActionParam atItem:(int)menuItemParam;
 - (void)handleLiveViewDeviceStatus:(int)status;
 
 @end

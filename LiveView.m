@@ -22,8 +22,24 @@
 
 @end
 
+#if 1
+#define DebugLog(...) NSLog(__VA_ARGS__)
+#else
+#define DebugLog(...)
+#endif
 
 @implementation LiveView
+
+/* addMenuItem
+	LVMenuItem *item
+ 
+	Add a menu item to the LiveView object.  This will need to trigger an update to the
+	device if the device is already connected
+ */
+
+- (NSString*)softwareVersion {
+	return softwareVersion;
+}
 
 - (void)addMenuItem:(LVMenuItem *)item {
 	if (menuItems==nil) {
@@ -32,70 +48,74 @@
 	[item retain];
 	[menuItems addObject:item];
 }
+
 - (void)sendMenuItemResponse:(int)number item:(LVMenuItem *)item {
 	NSMutableData *output = [[[NSMutableData alloc] init] autorelease];
-	[output appendint8:![item isAlertItem]];
-	[output appendBEint16:0];
-	[output appendBEint16:[item unreadCount]];
-	[output appendBEint16:0];
-	[output appendint8:number+3];
-	[output appendint8:0];
-	[output appendBEint16:0];
-	[output appendBEint16:0];
-	[output appendBigString:[item title]];
+	[output serializeWithFormat:@">BHHHBBSSS", ![item isAlertItem], 0, [item unreadCount],
+	 0, number+3, 0, @"", @"", [item title]];
 	[output appendData:[item image]];
-	NSLog(@"Sending item %@",[item title]);
+	DebugLog(@"Sending item %@",[item title]);
 	[self sendMessage:kMessageGetMenuItem_Resp withData:output];
 }	
 
 - (void)handleLiveViewMessage:(LiveViewMessage_t)msg withData:(NSData *)data {
 	NSMutableData *output = [[[NSMutableData alloc] init] autorelease];
 	int number = 0;
-	int c;
+	int c = 0;
+	int navigation = 0;
+	int menuId = 0;
+	NSString *sa, *sb, *sc;
+	LVMenuItem *i;
 	[output appendint8:msg];
 	[self sendMessage:kMessageAck withData:output];
 	switch (msg) {
 		case kMessageGetCaps_Resp:
-			//			80 80 13 13 30 30 13 13 32 00 05 302e302e35 (0.0.5)
-			[data getBytes:&width  range:NSMakeRange(0, 1)];
-			[data getBytes:&height range:NSMakeRange(1, 1)];
-			[data getBytes:&statusBarWidth  range:NSMakeRange(2, 1)];
-			[data getBytes:&statusBarHeight range:NSMakeRange(3, 1)];
-			[data getBytes:&viewWidth  range:NSMakeRange(4, 1)];
-			[data getBytes:&viewHeight range:NSMakeRange(5, 1)];
-			[data getBytes:&announceWidth  range:NSMakeRange(6, 1)];
-			[data getBytes:&announceHeight range:NSMakeRange(7, 1)];
-			[data getBytes:&textChunkSize range:NSMakeRange(8, 1)];
-			[data getBytes:&idleTimer range:NSMakeRange(9, 1)];
-			[data getBytes:&number range:NSMakeRange(10, 1)];
-			softwareVersion = [[NSString alloc]
-							   initWithData:[data
-											 subdataWithRange:NSMakeRange(11, number)]
-							   encoding:NSASCIIStringEncoding];
+			width=height=statusBarWidth=statusBarHeight=
+			viewWidth=viewHeight=announceWidth=announceHeight=
+			textChunkSize=idleTimer=0;
+			[data deserializeWithFormat:@">BBBBBBBBBBs",
+			 &width,&height,&statusBarWidth,&statusBarHeight,
+			 &viewWidth,&viewHeight,&announceWidth,&announceHeight,
+			 &textChunkSize, &idleTimer, &softwareVersion];
+			[softwareVersion retain];
 			if (idleTimer!=0) {
-				NSLog(@"DisplayCapabilities with non-zero idle timer %d", idleTimer);
+				DebugLog(@"DisplayCapabilities with non-zero idle timer %d", idleTimer);
 			}
-			NSLog(@"Connection from LiveView with Version %@", softwareVersion);
+			DebugLog(@"Connection from LiveView with Version %@", softwareVersion);
 			[callback newLiveViewConnection];
 			[output setLength:0];
 			[output appendint8:[menuItems count]];
 			[self sendMessage:kMessageSetMenuSize withData: output];
-		case kMessageGetMenuItems:
-			[data getBytes:&number range:NSMakeRange(0, 1)];
-			switch (number) {
-				case 0:
-					[output setLength:0];
-					for (c=0;c<[menuItems count]; c++)
-						[self sendMenuItemResponse:c item:[menuItems objectAtIndex:c]];
-					break;
-				default:
-					break;
-			}
 			break;
-		case kMessageGetAlert:
-			[data getBytes:&number range:NSMakeRange(0,1)];
+			
+		case kMessageGetMenuItem:
+			[data deserializeWithFormat:@">B",&number];
 			[output setLength:0];
+			[self sendMenuItemResponse:number item:[menuItems objectAtIndex:number]];
+			break;
+			
+		case kMessageGetMenuItems:
+			[data deserializeWithFormat:@">B",&number];
+			if (number) DebugLog(@"GetMenuItems with non-zero argument: %d",number);
+			[output setLength:0];
+			for (c=0;c<[menuItems count]; c++)
+				[self sendMenuItemResponse:c item:[menuItems objectAtIndex:c]];
+			break;
+			
+		case kMessageGetAlert:
+			[data deserializeWithFormat:@">BBHsss",&menuItemId,&alertAction,&maxBodySize,&sa,&sb,&sc];
+			if ([sa length] || [sb length] || [sc length]) {
+				DebugLog(@"GetAlert with non-zero text: %@,%@,%@",sa,sb,sc);
+			}
+			i=[menuItems objectAtIndex:menuItemId];
+			[output setLength:0];
+			[output serializeWithFormat:@">BHHHBB", 0, 20, [i unreadCount], 15, 0, 0];
+			[output serializeWithFormat:@">SSSBL",
+			 @"Time", @"Header", @"01234567890123456789012345678901234567890123456789", 0,
+			 [[i image] length]];
+			[output appendData:[i image]];
 			[self sendMessage:kMessageGetAlert_Resp withData:output];
+			[callback handleLiveViewAlertAction:alertAction atItem:menuItemId];
 			break;
 			
 		case kMessageSetStatusBar_Resp:
@@ -104,49 +124,75 @@
 			[output appendint8:12];
 			[output appendint8:0];
 			[self sendMessage:kMessageSetMenuSettings withData:output];
+			break;
 			
 		case kMessageGetTime:
 			[output setLength:0];
-			[output appendBEint32:[[[NSDate alloc] init] timeIntervalSince1970]];
-			[output appendint8:0];
+			NSDate *d=[[[NSDate alloc] init] autorelease];
+			int now=[d timeIntervalSince1970];
+			int tzoff=[[NSTimeZone localTimeZone] secondsFromGMTForDate:d];
+			[output serializeWithFormat:@"LB",now+tzoff,0];
 			[self sendMessage:kMessageGetTime_Resp withData:output];
+			break;
 			
 		case kMessageDeviceStatus:
+			[data deserializeWithFormat:@">B",&screenStatus];
 			[output setLength:0];
 			[output appendint8:kResultOK];
 			[self sendMessage:kMessageDeviceStatus_Resp withData:output];
+			[callback handleLiveViewDeviceStatus:screenStatus];
 			break;
 			
 		case kMessageNavigation:
+			number=navigation=menuItemId=menuId=0;
+			[data deserializeWithFormat:@">HBBB", &number, &navigation, &menuItemId, &menuId];
+			if (number!=3)
+				DebugLog(@"Unexpected navigation message length: %d [%@]",number, data);
+			else if (menuId != 10 && menuId != 20)
+				DebugLog(@"Unexpected navigation menu ID: %d",menuId);
+			else if (navigation !=32 && ((navigation<1)||(navigation>15)))
+				DebugLog(@"Navigation type out of range: %d",navigation);
+			else {
+				wasInAlert = (menuId == 20);
+				if (navigation!=32) {
+					navAction = (navigation-1)%3;
+					navType = (navigation-1)/3;
+				} else {
+					navAction = kActionPress;
+					navType = kNavMenuSelect;
+				}
+				[callback handleLiveViewNavigationAction:navAction ofType:navType
+												  inMenu:menuId atItem:menuItemId];
+			}
 			[output setLength:0];
 			[output appendint8:kResultExit];
 			[self sendMessage:kMessageNavigation_Resp withData:output];
 			break;
 		default:
-			NSLog(@"Message %d with data [%@]\n", msg, data);
+			DebugLog(@"Message %d with data [%@]\n", msg, data);
 			break;
 	}
 }
 
 - (void)handleRawNotification:(NSData *)data {
-	NSLog(@"Unknown data [%@]\n",data);
+	DebugLog(@"Unknown data [%@]\n",data);
 }
 
 - (void)registerWithCallback:(NSObject<LiveViewCallback> *)lvc {
+	DebugLog(@"Started listening for Bluetooth notifications on channel %d", serverChannelID);
 	incomingChannelNotification = [IOBluetoothRFCOMMChannel registerForChannelOpenNotifications:self selector:@selector(newRFCOMMChannelOpened:channel:)];
-	NSLog(@"Started listening for Bluetooth notifications on channel %d", serverChannelID);
 	callback=lvc;
 }
 
 - (void) newRFCOMMChannelOpened:(IOBluetoothUserNotification *)inNotification
                         channel:(IOBluetoothRFCOMMChannel *)newChannel {
 	// Make sure the channel is an incoming channel on the right channel ID.
-	NSLog(@"Received connection on channel %d from 0x%x",[newChannel getChannelID],[[newChannel getDevice] getClassOfDevice]);
+	DebugLog(@"Received connection on channel %d from 0x%x",[newChannel getChannelID],[[newChannel getDevice] getClassOfDevice]);
 	if (newChannel != nil && [newChannel isIncoming] && [[newChannel getDevice] getClassOfDevice]==0x20fc) {
 		rfcommChannel = newChannel;
 		serverChannelID = [newChannel getChannelID];
 		channelMTU = [newChannel getMTU];
-		NSLog(@"MTU is %d",channelMTU);
+		DebugLog(@"MTU is %d",channelMTU);
 		
 		// Retains the channel
 		[rfcommChannel retain];
@@ -171,7 +217,7 @@
 
 - (void)rfcommChannelClosed:(IOBluetoothRFCOMMChannel*)rfcommChannelParam {
 	rfcommChannel = nil;
-	NSLog(@"channel was closed");
+	DebugLog(@"channel was closed");
 	//	[self publishService];
 }
 
@@ -188,18 +234,18 @@
 		if (headlen==4) {
 			[data getBytes:&datalen range:NSMakeRange(2,4)];
 			datalen=ntohl(datalen);
-			NSLog(@"received message %d with data [%@] on channel id %d",msg,data, cid);
+			DebugLog(@"received message %d with data [%@] on channel id %d",msg,data, cid);
 			[self handleLiveViewMessage:msg
 								   withData:[data subdataWithRange:NSMakeRange(6,datalen)]];
 			data = [data subdataWithRange:NSMakeRange(6+datalen, [data length]-6-datalen)];
 		} else {
-			NSLog(@"received data [%@] on channel id %d",data, cid);
+			DebugLog(@"received data [%@] on channel id %d",data, cid);
 			[self handleRawNotification:data];
 			data=[data subdataWithRange:NSMakeRange(0, 0)];
 		}
 	}
 	if ([data length]>0) {
-		NSLog(@"received data [%@] on channel id %d",data, cid);
+		DebugLog(@"received data [%@] on channel id %d",data, cid);
 		[self handleRawNotification:data];
 	}
 	
@@ -207,7 +253,7 @@
 
 - (void)rfcommChannelWriteComplete:(IOBluetoothRFCOMMChannel*)rfcommChannelParam refcon:(void*)refcon status:(IOReturn)error {
 //	NSData *data=(NSData *)refcon;
-	if (error != kIOReturnSuccess) NSLog(@"Write complete status %d",error);
+	if (error != kIOReturnSuccess) DebugLog(@"Write complete status %d",error);
 //	[data release];
 }
 
@@ -220,18 +266,18 @@
 			remain -= channelMTU;
 			data = [data subdataWithRange:NSMakeRange(channelMTU, remain)];
 			[rfcommChannel writeAsync:(void*)[packet bytes] length:[packet length] refcon:nil];
-			NSLog(@"Wrote %d bytes",[packet length]);
+			DebugLog(@"Wrote %d bytes",[packet length]);
 		}
 		if ([data length]) {
 			[rfcommChannel writeAsync:(void*)[data bytes] length:[data length] refcon:nil];
-			NSLog(@"Wrote %d bytes",[data length]);
+			DebugLog(@"Wrote %d bytes",[data length]);
 		}
 	}
 }
 
 - (void)sendMessage: (LiveViewMessage_t)msg withData:(NSData *)data {
 	if (rfcommChannel!=nil) {
-		NSLog(@"Sending message %d with data [%@]",msg,data);
+		DebugLog(@"Sending message %d with data [%@]",msg,data);
 		NSMutableData *output=[[[NSMutableData alloc] init] autorelease];
 		[output appendint8:msg];
 		[output appendint8:4];
@@ -242,16 +288,25 @@
 }
 
 - (void)stop {
+	// Stop listening to openNotifications.
 	[incomingChannelNotification unregister];
-	[incomingChannelNotification release];
+	// Don't have to release?
+	// [incomingChannelNotification release];
+	// Close channel if open
+	if ([rfcommChannel isOpen]) [rfcommChannel closeChannel];
+	// Close underlying bluetooth connection
+	[[rfcommChannel getDevice] closeConnection];
+	// release it
 	[rfcommChannel release];
 	rfcommChannel = nil;
 }
 
 - (void)dealloc {
+	// we retained some stuff
 	[softwareVersion release];
+	[menuItems removeAllObjects];
 	[menuItems release];
-	[incomingChannelNotification release];
+	// this is why we nil rfcommChannel
 	[rfcommChannel release];
 	[super dealloc];
 }

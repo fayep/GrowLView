@@ -8,6 +8,10 @@
 
 #import <Foundation/Foundation.h>
 
+@interface NSData (endian)
+- (NSMutableData *)deserializeWithFormat:(const NSString *)format, ...;
+@end
+
 
 @interface NSMutableData (endian)
 
@@ -16,5 +20,7 @@
 - (void)appendBEint32:(int32_t)i32;
 - (void)appendString:(NSString *)s;
 - (void)appendBigString:(NSString *)s;
+- (NSMutableData *)serializeWithFormat:(const NSString *)format, ...;
+- (NSMutableData *)deserializeWithFormat:(const NSString *)format, ...;
 
 @end
